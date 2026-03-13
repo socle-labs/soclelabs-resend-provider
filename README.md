@@ -2,6 +2,8 @@
 
 A Terraform provider for managing [Resend](https://resend.com) email infrastructure as code — domains, API keys, webhooks, contacts, segments, topics, and contact properties.
 
+> NOTICE: This project is not affiliated with or endorsed by Resend. Support for this provider is provided by the maintainers of this repository, not by Resend. Resend only provides support for the Resend API itself.
+
 ## Requirements
 
 - [Terraform](https://developer.hashicorp.com/terraform/downloads) >= 1.0
