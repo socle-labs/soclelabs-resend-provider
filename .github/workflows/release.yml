@@ -1,0 +1,97 @@
+name: Release
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.22"
+
+      - name: Run tests
+        run: go test ./...
+
+      - name: Determine version
+        id: version
+        run: |
+          # Get the latest tag, default to v0.0.0 if none exists
+          LATEST_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "v0.0.0")
+          # Strip the 'v' prefix for arithmetic
+          MAJOR=$(echo "$LATEST_TAG" | sed 's/v//' | cut -d. -f1)
+          MINOR=$(echo "$LATEST_TAG" | sed 's/v//' | cut -d. -f2)
+          PATCH=$(echo "$LATEST_TAG" | sed 's/v//' | cut -d. -f3)
+          # Bump patch version
+          PATCH=$((PATCH + 1))
+          NEW_VERSION="v${MAJOR}.${MINOR}.${PATCH}"
+          echo "version=$NEW_VERSION" >> "$GITHUB_OUTPUT"
+          echo "Releasing $NEW_VERSION (previous: $LATEST_TAG)"
+
+      - name: Build binaries
+        run: |
+          VERSION=${{ steps.version.outputs.version }}
+          LDFLAGS="-s -w -X main.version=${VERSION}"
+          mkdir -p dist
+
+          platforms=(
+            "linux/amd64"
+            "linux/arm64"
+            "darwin/amd64"
+            "darwin/arm64"
+            "windows/amd64"
+          )
+
+          for platform in "${platforms[@]}"; do
+            GOOS="${platform%/*}"
+            GOARCH="${platform#*/}"
+            output="dist/terraform-provider-resend_${VERSION}_${GOOS}_${GOARCH}"
+            if [ "$GOOS" = "windows" ]; then
+              output="${output}.exe"
+            fi
+            echo "Building $GOOS/$GOARCH..."
+            GOOS=$GOOS GOARCH=$GOARCH go build -ldflags "$LDFLAGS" -o "$output" .
+          done
+
+      - name: Create archives
+        run: |
+          VERSION=${{ steps.version.outputs.version }}
+          cd dist
+
+          for binary in terraform-provider-resend_*; do
+            if [[ "$binary" == *.exe ]]; then
+              archive="${binary%.exe}.zip"
+              zip "$archive" "$binary"
+            else
+              archive="${binary}.tar.gz"
+              tar czf "$archive" "$binary"
+            fi
+            rm "$binary"
+          done
+
+      - name: Generate SHA256 checksums
+        run: |
+          cd dist
+          sha256sum * > SHA256SUMS
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.version.outputs.version }}
+          name: ${{ steps.version.outputs.version }}
+          generate_release_notes: true
+          files: |
+            dist/*
