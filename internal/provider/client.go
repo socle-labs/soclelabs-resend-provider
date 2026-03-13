@@ -14,6 +14,43 @@ import (
 
 const defaultBaseURL = "https://api.resend.com"
 
+// APIError represents a structured error response from the Resend API.
+type APIError struct {
+	StatusCode int    `json:"statusCode"`
+	Name       string `json:"name"`
+	Message    string `json:"message"`
+}
+
+func (e *APIError) Error() string {
+	if e.Name != "" {
+		return fmt.Sprintf("Resend API error (HTTP %d, %s): %s", e.StatusCode, e.Name, e.Message)
+	}
+	return fmt.Sprintf("Resend API error (HTTP %d): %s", e.StatusCode, e.Message)
+}
+
+// IsNotFound returns true if the error is a 404 Not Found.
+func IsNotFound(err error) bool {
+	if err == nil {
+		return false
+	}
+	apiErr, ok := err.(*APIError)
+	return ok && apiErr.StatusCode == http.StatusNotFound
+}
+
+// parseAPIError attempts to parse a Resend API error response body.
+// If parsing fails, it falls back to using the raw body as the message.
+func parseAPIError(statusCode int, body []byte) *APIError {
+	var apiErr APIError
+	if err := json.Unmarshal(body, &apiErr); err == nil && apiErr.Message != "" {
+		apiErr.StatusCode = statusCode
+		return &apiErr
+	}
+	return &APIError{
+		StatusCode: statusCode,
+		Message:    string(body),
+	}
+}
+
 type ResendClient struct {
 	APIKey     string
 	BaseURL    string
@@ -74,6 +111,16 @@ func (c *ResendClient) doRequest(ctx context.Context, method, path string, body 
 	return respBody, resp.StatusCode, nil
 }
 
+// checkError returns a structured APIError if the status code indicates failure.
+func checkError(statusCode int, body []byte, allowedStatuses ...int) error {
+	for _, s := range allowedStatuses {
+		if statusCode == s {
+			return nil
+		}
+	}
+	return parseAPIError(statusCode, body)
+}
+
 // ---------------------------------------------------------------------------
 // Domain API
 // ---------------------------------------------------------------------------
@@ -128,8 +175,8 @@ func (c *ResendClient) CreateDomain(ctx context.Context, req CreateDomainRequest
 	if err != nil {
 		return nil, err
 	}
-	if statusCode != http.StatusOK && statusCode != http.StatusCreated {
-		return nil, fmt.Errorf("unexpected status code %d: %s", statusCode, string(body))
+	if err := checkError(statusCode, body, http.StatusOK, http.StatusCreated); err != nil {
+		return nil, err
 	}
 	var result CreateDomainResponse
 	if err := json.Unmarshal(body, &result); err != nil {
@@ -146,8 +193,8 @@ func (c *ResendClient) GetDomain(ctx context.Context, id string) (*Domain, error
 	if statusCode == http.StatusNotFound {
 		return nil, nil
 	}
-	if statusCode != http.StatusOK {
-		return nil, fmt.Errorf("unexpected status code %d: %s", statusCode, string(body))
+	if err := checkError(statusCode, body, http.StatusOK); err != nil {
+		return nil, err
 	}
 	var result Domain
 	if err := json.Unmarshal(body, &result); err != nil {
@@ -161,10 +208,7 @@ func (c *ResendClient) UpdateDomain(ctx context.Context, id string, req UpdateDo
 	if err != nil {
 		return err
 	}
-	if statusCode != http.StatusOK {
-		return fmt.Errorf("unexpected status code %d: %s", statusCode, string(body))
-	}
-	return nil
+	return checkError(statusCode, body, http.StatusOK)
 }
 
 func (c *ResendClient) DeleteDomain(ctx context.Context, id string) error {
@@ -172,10 +216,7 @@ func (c *ResendClient) DeleteDomain(ctx context.Context, id string) error {
 	if err != nil {
 		return err
 	}
-	if statusCode != http.StatusOK {
-		return fmt.Errorf("unexpected status code %d: %s", statusCode, string(body))
-	}
-	return nil
+	return checkError(statusCode, body, http.StatusOK)
 }
 
 func (c *ResendClient) VerifyDomain(ctx context.Context, id string) error {
@@ -183,10 +224,7 @@ func (c *ResendClient) VerifyDomain(ctx context.Context, id string) error {
 	if err != nil {
 		return err
 	}
-	if statusCode != http.StatusOK {
-		return fmt.Errorf("unexpected status code %d: %s", statusCode, string(body))
-	}
-	return nil
+	return checkError(statusCode, body, http.StatusOK)
 }
 
 // ---------------------------------------------------------------------------
@@ -219,8 +257,8 @@ func (c *ResendClient) CreateAPIKey(ctx context.Context, req CreateAPIKeyRequest
 	if err != nil {
 		return nil, err
 	}
-	if statusCode != http.StatusOK && statusCode != http.StatusCreated {
-		return nil, fmt.Errorf("unexpected status code %d: %s", statusCode, string(body))
+	if err := checkError(statusCode, body, http.StatusOK, http.StatusCreated); err != nil {
+		return nil, err
 	}
 	var result CreateAPIKeyResponse
 	if err := json.Unmarshal(body, &result); err != nil {
@@ -234,8 +272,8 @@ func (c *ResendClient) ListAPIKeys(ctx context.Context) (*ListAPIKeysResponse, e
 	if err != nil {
 		return nil, err
 	}
-	if statusCode != http.StatusOK {
-		return nil, fmt.Errorf("unexpected status code %d: %s", statusCode, string(body))
+	if err := checkError(statusCode, body, http.StatusOK); err != nil {
+		return nil, err
 	}
 	var result ListAPIKeysResponse
 	if err := json.Unmarshal(body, &result); err != nil {
@@ -249,10 +287,7 @@ func (c *ResendClient) DeleteAPIKey(ctx context.Context, id string) error {
 	if err != nil {
 		return err
 	}
-	if statusCode != http.StatusOK {
-		return fmt.Errorf("unexpected status code %d: %s", statusCode, string(body))
-	}
-	return nil
+	return checkError(statusCode, body, http.StatusOK)
 }
 
 // ---------------------------------------------------------------------------
@@ -288,8 +323,8 @@ func (c *ResendClient) CreateWebhook(ctx context.Context, req CreateWebhookReque
 	if err != nil {
 		return nil, err
 	}
-	if statusCode != http.StatusOK && statusCode != http.StatusCreated {
-		return nil, fmt.Errorf("unexpected status code %d: %s", statusCode, string(body))
+	if err := checkError(statusCode, body, http.StatusOK, http.StatusCreated); err != nil {
+		return nil, err
 	}
 	var result CreateWebhookResponse
 	if err := json.Unmarshal(body, &result); err != nil {
@@ -306,8 +341,8 @@ func (c *ResendClient) GetWebhook(ctx context.Context, id string) (*Webhook, err
 	if statusCode == http.StatusNotFound {
 		return nil, nil
 	}
-	if statusCode != http.StatusOK {
-		return nil, fmt.Errorf("unexpected status code %d: %s", statusCode, string(body))
+	if err := checkError(statusCode, body, http.StatusOK); err != nil {
+		return nil, err
 	}
 	var result Webhook
 	if err := json.Unmarshal(body, &result); err != nil {
@@ -321,10 +356,7 @@ func (c *ResendClient) UpdateWebhook(ctx context.Context, id string, req UpdateW
 	if err != nil {
 		return err
 	}
-	if statusCode != http.StatusOK {
-		return fmt.Errorf("unexpected status code %d: %s", statusCode, string(body))
-	}
-	return nil
+	return checkError(statusCode, body, http.StatusOK)
 }
 
 func (c *ResendClient) DeleteWebhook(ctx context.Context, id string) error {
@@ -332,10 +364,7 @@ func (c *ResendClient) DeleteWebhook(ctx context.Context, id string) error {
 	if err != nil {
 		return err
 	}
-	if statusCode != http.StatusOK {
-		return fmt.Errorf("unexpected status code %d: %s", statusCode, string(body))
-	}
-	return nil
+	return checkError(statusCode, body, http.StatusOK)
 }
 
 // ---------------------------------------------------------------------------
@@ -379,8 +408,8 @@ func (c *ResendClient) CreateContact(ctx context.Context, req CreateContactReque
 	if err != nil {
 		return nil, err
 	}
-	if statusCode != http.StatusOK && statusCode != http.StatusCreated {
-		return nil, fmt.Errorf("unexpected status code %d: %s", statusCode, string(body))
+	if err := checkError(statusCode, body, http.StatusOK, http.StatusCreated); err != nil {
+		return nil, err
 	}
 	var result CreateContactResponse
 	if err := json.Unmarshal(body, &result); err != nil {
@@ -397,8 +426,8 @@ func (c *ResendClient) GetContact(ctx context.Context, id string) (*Contact, err
 	if statusCode == http.StatusNotFound {
 		return nil, nil
 	}
-	if statusCode != http.StatusOK {
-		return nil, fmt.Errorf("unexpected status code %d: %s", statusCode, string(body))
+	if err := checkError(statusCode, body, http.StatusOK); err != nil {
+		return nil, err
 	}
 	var result Contact
 	if err := json.Unmarshal(body, &result); err != nil {
@@ -412,10 +441,7 @@ func (c *ResendClient) UpdateContact(ctx context.Context, id string, req UpdateC
 	if err != nil {
 		return err
 	}
-	if statusCode != http.StatusOK {
-		return fmt.Errorf("unexpected status code %d: %s", statusCode, string(body))
-	}
-	return nil
+	return checkError(statusCode, body, http.StatusOK)
 }
 
 func (c *ResendClient) DeleteContact(ctx context.Context, id string) error {
@@ -423,10 +449,7 @@ func (c *ResendClient) DeleteContact(ctx context.Context, id string) error {
 	if err != nil {
 		return err
 	}
-	if statusCode != http.StatusOK {
-		return fmt.Errorf("unexpected status code %d: %s", statusCode, string(body))
-	}
-	return nil
+	return checkError(statusCode, body, http.StatusOK)
 }
 
 // ---------------------------------------------------------------------------
@@ -449,8 +472,8 @@ func (c *ResendClient) CreateSegment(ctx context.Context, req CreateSegmentReque
 	if err != nil {
 		return nil, err
 	}
-	if statusCode != http.StatusOK && statusCode != http.StatusCreated {
-		return nil, fmt.Errorf("unexpected status code %d: %s", statusCode, string(body))
+	if err := checkError(statusCode, body, http.StatusOK, http.StatusCreated); err != nil {
+		return nil, err
 	}
 	var result Segment
 	if err := json.Unmarshal(body, &result); err != nil {
@@ -467,8 +490,8 @@ func (c *ResendClient) GetSegment(ctx context.Context, id string) (*Segment, err
 	if statusCode == http.StatusNotFound {
 		return nil, nil
 	}
-	if statusCode != http.StatusOK {
-		return nil, fmt.Errorf("unexpected status code %d: %s", statusCode, string(body))
+	if err := checkError(statusCode, body, http.StatusOK); err != nil {
+		return nil, err
 	}
 	var result Segment
 	if err := json.Unmarshal(body, &result); err != nil {
@@ -482,10 +505,7 @@ func (c *ResendClient) DeleteSegment(ctx context.Context, id string) error {
 	if err != nil {
 		return err
 	}
-	if statusCode != http.StatusOK {
-		return fmt.Errorf("unexpected status code %d: %s", statusCode, string(body))
-	}
-	return nil
+	return checkError(statusCode, body, http.StatusOK)
 }
 
 // ---------------------------------------------------------------------------
@@ -520,8 +540,8 @@ func (c *ResendClient) CreateTopic(ctx context.Context, req CreateTopicRequest) 
 	if err != nil {
 		return nil, err
 	}
-	if statusCode != http.StatusOK && statusCode != http.StatusCreated {
-		return nil, fmt.Errorf("unexpected status code %d: %s", statusCode, string(body))
+	if err := checkError(statusCode, body, http.StatusOK, http.StatusCreated); err != nil {
+		return nil, err
 	}
 	var result Topic
 	if err := json.Unmarshal(body, &result); err != nil {
@@ -538,8 +558,8 @@ func (c *ResendClient) GetTopic(ctx context.Context, id string) (*Topic, error) 
 	if statusCode == http.StatusNotFound {
 		return nil, nil
 	}
-	if statusCode != http.StatusOK {
-		return nil, fmt.Errorf("unexpected status code %d: %s", statusCode, string(body))
+	if err := checkError(statusCode, body, http.StatusOK); err != nil {
+		return nil, err
 	}
 	var result Topic
 	if err := json.Unmarshal(body, &result); err != nil {
@@ -553,10 +573,7 @@ func (c *ResendClient) UpdateTopic(ctx context.Context, id string, req UpdateTop
 	if err != nil {
 		return err
 	}
-	if statusCode != http.StatusOK {
-		return fmt.Errorf("unexpected status code %d: %s", statusCode, string(body))
-	}
-	return nil
+	return checkError(statusCode, body, http.StatusOK)
 }
 
 func (c *ResendClient) DeleteTopic(ctx context.Context, id string) error {
@@ -564,10 +581,7 @@ func (c *ResendClient) DeleteTopic(ctx context.Context, id string) error {
 	if err != nil {
 		return err
 	}
-	if statusCode != http.StatusOK {
-		return fmt.Errorf("unexpected status code %d: %s", statusCode, string(body))
-	}
-	return nil
+	return checkError(statusCode, body, http.StatusOK)
 }
 
 // ---------------------------------------------------------------------------
@@ -601,8 +615,8 @@ func (c *ResendClient) CreateContactProperty(ctx context.Context, req CreateCont
 	if err != nil {
 		return nil, err
 	}
-	if statusCode != http.StatusOK && statusCode != http.StatusCreated {
-		return nil, fmt.Errorf("unexpected status code %d: %s", statusCode, string(body))
+	if err := checkError(statusCode, body, http.StatusOK, http.StatusCreated); err != nil {
+		return nil, err
 	}
 	var result ContactProperty
 	if err := json.Unmarshal(body, &result); err != nil {
@@ -619,8 +633,8 @@ func (c *ResendClient) GetContactProperty(ctx context.Context, id string) (*Cont
 	if statusCode == http.StatusNotFound {
 		return nil, nil
 	}
-	if statusCode != http.StatusOK {
-		return nil, fmt.Errorf("unexpected status code %d: %s", statusCode, string(body))
+	if err := checkError(statusCode, body, http.StatusOK); err != nil {
+		return nil, err
 	}
 	var result ContactProperty
 	if err := json.Unmarshal(body, &result); err != nil {
@@ -634,10 +648,7 @@ func (c *ResendClient) UpdateContactProperty(ctx context.Context, id string, req
 	if err != nil {
 		return err
 	}
-	if statusCode != http.StatusOK {
-		return fmt.Errorf("unexpected status code %d: %s", statusCode, string(body))
-	}
-	return nil
+	return checkError(statusCode, body, http.StatusOK)
 }
 
 func (c *ResendClient) DeleteContactProperty(ctx context.Context, id string) error {
@@ -645,10 +656,7 @@ func (c *ResendClient) DeleteContactProperty(ctx context.Context, id string) err
 	if err != nil {
 		return err
 	}
-	if statusCode != http.StatusOK {
-		return fmt.Errorf("unexpected status code %d: %s", statusCode, string(body))
-	}
-	return nil
+	return checkError(statusCode, body, http.StatusOK)
 }
 
 // ---------------------------------------------------------------------------
@@ -666,8 +674,8 @@ func listResource[T any](c *ResendClient, ctx context.Context, path string) ([]T
 	if err != nil {
 		return nil, err
 	}
-	if statusCode != http.StatusOK {
-		return nil, fmt.Errorf("unexpected status code %d: %s", statusCode, string(body))
+	if err := checkError(statusCode, body, http.StatusOK); err != nil {
+		return nil, err
 	}
 	var result ListResponse[T]
 	if err := json.Unmarshal(body, &result); err != nil {
